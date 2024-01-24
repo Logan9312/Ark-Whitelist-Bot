@@ -32,3 +32,7 @@ func BotConnect(token string) (*discordgo.Session, error) {
 func Ptr[T any](v T) *T {
 	return &v
 }
+
+func HandleCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	
+}
