@@ -91,7 +91,7 @@ func UpdateGist(gistID, token string, whitelist *Whitelist) error {
 	client := &http.Client{}
 
 	// Marshal the whitelist into JSON
-	whitelistContent, err := json.Marshal(whitelist)
+	whitelistContent, err := json.MarshalIndent(whitelist, "", "    ")
 	if err != nil {
 		return err
 	}
