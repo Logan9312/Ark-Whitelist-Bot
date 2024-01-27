@@ -1,27 +1,25 @@
 package bot
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
+	"path/filepath"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/plumbing/transport/http"
 )
 
 type Whitelist struct {
 	ExclusiveJoin []string `json:"ExclusiveJoin"`
 }
 
-type GistUpdatePayload struct {
-	Files map[string]map[string]string `json:"files"`
-}
-
-type GistGetPayload struct {
-	Files map[string]map[string]any `json:"files"`
-}
+const (
+	GITHUB_URL = "https://github.com/Logan9312/Whitelist-Testing"
+)
 
 var commands = []*discordgo.ApplicationCommand{
 	{
@@ -38,95 +36,24 @@ var commands = []*discordgo.ApplicationCommand{
 				Description: "The EOS id of the user.",
 				Required:    true,
 			},
+			{
+				Type:        discordgo.ApplicationCommandOptionString,
+				Name:        "folder",
+				Description: "The folder the file is in.",
+				Required:    true,
+			},
+			{
+				Type:         discordgo.ApplicationCommandOptionString,
+				Name:         "file",
+				Description:  "The file to edit.",
+				Required:     true,
+				Autocomplete: true,
+			},
 		},
 	},
 }
 
-// Function to get the current content of a Gist
-func GetGistContent(gistID, token string) (*Whitelist, error) {
-	client := &http.Client{}
-	req, err := http.NewRequest("GET", fmt.Sprintf("https://api.github.com/gists/%s", gistID), nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Add("Authorization", "token "+token)
-	req.Header.Add("X-GitHub-Api-Version", "2022-11-28")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	// Read the response body into a byte array
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var payload GistGetPayload
-	err = json.Unmarshal(body, &payload)
-	if err != nil {
-		fmt.Println("Error decoding whitelist:", err)
-		return nil, err
-	}
-
-	// Assuming the file containing the whitelist is named "whitelist.json"
-	whitelistContent, exists := payload.Files["whitelist.json"]
-	if !exists {
-		return nil, fmt.Errorf("whitelist.json not found in the gist")
-	}
-
-	var whitelist Whitelist
-	err = json.Unmarshal([]byte(whitelistContent["content"].(string)), &whitelist)
-	if err != nil {
-		fmt.Println("Error decoding whitelist:", err)
-		return nil, err
-	}
-
-	return &whitelist, nil
-}
-
-func UpdateGist(gistID, token string, whitelist *Whitelist) error {
-	client := &http.Client{}
-
-	// Marshal the whitelist into JSON
-	whitelistContent, err := json.MarshalIndent(whitelist, "", "    ")
-	if err != nil {
-		return err
-	}
-
-	// Prepare the Gist update payload
-	updatePayload := GistUpdatePayload{
-		Files: map[string]map[string]string{
-			"whitelist.json": {"content": string(whitelistContent)},
-		},
-	}
-	payloadBytes, err := json.Marshal(updatePayload)
-	if err != nil {
-		return err
-	}
-
-	reqBody := bytes.NewBuffer(payloadBytes)
-	req, err := http.NewRequest("PATCH", fmt.Sprintf("https://api.github.com/gists/%s", gistID), reqBody)
-	if err != nil {
-		return err
-	}
-	req.Header.Add("Authorization", "token "+token)
-	req.Header.Add("Content-Type", "application/json")
-
-	_, err = client.Do(req)
-	return err
-}
-
-func ParseSlashCommand(i *discordgo.InteractionCreate) map[string]interface{} {
-	var options = make(map[string]interface{})
-	for _, option := range i.ApplicationCommandData().Options {
-		options[option.Name] = option.Value
-	}
-
-	return options
-}
+var autoCompleteFile = map[string][]string{}
 
 func BotConnect(token string) (*discordgo.Session, error) {
 
@@ -143,11 +70,153 @@ func BotConnect(token string) (*discordgo.Session, error) {
 		return s, fmt.Errorf("failed to open a websocket connection with discord. Likely due to an invalid token. %w", err)
 	}
 
+	_, tmpDir, err := FetchRepo()
+	defer os.RemoveAll(tmpDir)
+	if err != nil {
+		return nil, err
+	}
+
+	files, err := os.ReadDir(tmpDir)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, folder := range files {
+		if folder.Name() == ".git" || !folder.IsDir() {
+			continue
+		}
+
+		commands[0].Options[1].Choices = append(commands[0].Options[1].Choices, &discordgo.ApplicationCommandOptionChoice{
+			Name:  folder.Name(),
+			Value: folder.Name(),
+		})
+		dirPath := filepath.Join(tmpDir, folder.Name())
+		subFiles, err := os.ReadDir(dirPath)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, subFile := range subFiles {
+			autoCompleteFile[folder.Name()] = append(autoCompleteFile[folder.Name()], subFile.Name())
+		}
+
+	}
+
 	s.ApplicationCommandBulkOverwrite(s.State.User.ID, "", commands)
 
-	fmt.Println(s.State.User.Username + " bot startup complete!")
+	fmt.Println(s.State.User.Username + "bot startup complete!")
 
 	return s, nil
+}
+
+func FetchRepo() (*git.Repository, string, error) {
+	tmpDir, err := os.MkdirTemp("", "whitelist")
+	if err != nil {
+		fmt.Println("Error creating temp directory:", err)
+		return nil, "", err
+	}
+
+	repo, err := git.PlainClone(tmpDir, false, &git.CloneOptions{
+		URL:      GITHUB_URL,
+		Progress: os.Stdout,
+	})
+	if err != nil {
+		fmt.Println("Error cloning repository:", err)
+		return repo, "", err
+	}
+
+	return repo, tmpDir, nil
+}
+
+// Function to get the whitelist for a file
+func GetWhitelist(folderName, fileName string) (*Whitelist, error) {
+	// Clone the repository to a temporary directory
+
+	_, tmpDir, err := FetchRepo()
+	defer os.RemoveAll(tmpDir)
+	if err != nil {
+		return nil, err
+	}
+
+	// Read the file content
+	fileContent, err := os.ReadFile(filepath.Join(tmpDir, folderName, fileName))
+	if err != nil {
+		return nil, err
+	}
+
+	var whitelist Whitelist
+	if err := json.Unmarshal([]byte(fileContent), &whitelist); err != nil {
+		return nil, err
+	}
+
+	return &whitelist, nil
+
+}
+
+func UpdateRepo(folderName, fileName string, whitelist *Whitelist) error {
+	// Clone the repository to a temporary directory
+
+	repo, tmpDir, err := FetchRepo()
+	defer os.RemoveAll(tmpDir)
+	if err != nil {
+		return err
+	}
+
+	// Marshal the whitelist into JSON
+	whitelistContent, err := json.MarshalIndent(whitelist, "", "    ")
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(filepath.Join(tmpDir, folderName, fileName))
+
+	if err := os.WriteFile(filepath.Join(tmpDir, folderName, fileName), whitelistContent, 0644); err != nil {
+		return err
+	}
+
+	// Git operations: add, commit, and push
+	worktree, err := repo.Worktree()
+	if err != nil {
+		return err
+	}
+
+	_, err = worktree.Add(".")
+	if err != nil {
+		return err
+	}
+
+	_, err = worktree.Commit("Update whitelist", &git.CommitOptions{
+		Author: &object.Signature{
+			Name:  "Ark Whitelist Bot",
+			Email: "",
+			When:  time.Now(),
+		},
+	})
+	if err != nil {
+		return err
+	}
+
+	auth := &http.BasicAuth{
+		Username: os.Getenv("GITHUB_USERNAME"), // Replace with your GitHub username
+		Password: os.Getenv("GITHUB_TOKEN"),    // Replace with your GitHub token
+	}
+	err = repo.Push(&git.PushOptions{
+		Auth: auth,
+	})
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func ParseSlashCommand(i *discordgo.InteractionCreate) map[string]interface{} {
+	var options = make(map[string]interface{})
+	for _, option := range i.ApplicationCommandData().Options {
+		options[option.Name] = option.Value
+	}
+
+	return options
 }
 
 func Ptr[T any](v T) *T {
@@ -155,14 +224,18 @@ func Ptr[T any](v T) *T {
 }
 
 func HandleCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	if i.Type != discordgo.InteractionApplicationCommand {
-		return
+	if i.Type == discordgo.InteractionApplicationCommand {
+		switch i.ApplicationCommandData().Name {
+		case "whitelist":
+			WhitelistCommand(s, i)
+		}
+	} else if i.Type == discordgo.InteractionApplicationCommandAutocomplete {
+		switch i.ApplicationCommandData().Name {
+		case "whitelist":
+			WhitelistAutoComplete(s, i)
+		}
 	}
 
-	switch i.ApplicationCommandData().Name {
-	case "whitelist":
-		WhitelistCommand(s, i)
-	}
 }
 
 func WhitelistCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
@@ -175,13 +248,10 @@ func WhitelistCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	}
 	userId := options["eos_id"].(string)
 
-	gistID := "34573185a0c6f2dbda53109ba1d006c4" // Replace with your actual Gist ID
-	token := os.Getenv("GITHUB_TOKEN")           // Ensure GITHUB_TOKEN is set in your environment variables
-
-	// Fetch current whitelist from GitHub Gist
-	whitelist, err := GetGistContent(gistID, token)
+	// Fetch current whitelist from GitHub
+	whitelist, err := GetWhitelist(options["folder"].(string), options["file"].(string))
 	if err != nil {
-		fmt.Println("Error fetching whitelist from Gist:", err)
+		fmt.Println("Error fetching whitelist", err)
 		return
 	}
 
@@ -199,13 +269,14 @@ func WhitelistCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		whitelist.ExclusiveJoin = append(whitelist.ExclusiveJoin, userId)
 	}
 
-	// Update the Gist if a new ID was added
+	// Update the whitelist if a new ID was added
 	if !alreadyExists {
-		err = UpdateGist(gistID, token, whitelist)
+		err = UpdateRepo(options["folder"].(string), options["file"].(string), whitelist)
 		if err != nil {
-			fmt.Println("Error updating whitelist Gist:", err)
+			fmt.Println("Error updating whitelist:", err)
 			return
 		}
+		fmt.Println("Whitelist updated")
 	}
 
 	// Send a confirmation message
@@ -217,5 +288,33 @@ func WhitelistCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	})
 	if err != nil {
 		fmt.Println("Error sending confirmation message:", err)
+	}
+}
+
+func WhitelistAutoComplete(s *discordgo.Session, i *discordgo.InteractionCreate) {
+
+	options := ParseSlashCommand(i)
+
+	if options["folder"] == nil {
+		fmt.Println("No folder provided")
+		return
+	}
+
+	response := []*discordgo.ApplicationCommandOptionChoice{}
+	for _, file := range autoCompleteFile[options["folder"].(string)] {
+		response = append(response, &discordgo.ApplicationCommandOptionChoice{
+			Name:  file,
+			Value: file,
+		})
+	}
+
+	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionApplicationCommandAutocompleteResult,
+		Data: &discordgo.InteractionResponseData{
+			Choices: response,
+		},
+	})
+	if err != nil {
+		fmt.Println("Error sending autocomplete response:", err)
 	}
 }
