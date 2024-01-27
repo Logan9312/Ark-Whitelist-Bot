@@ -49,10 +49,11 @@ var commands = []*discordgo.ApplicationCommand{
 				Required:    true,
 			},
 			{
-				Type:        discordgo.ApplicationCommandOptionString,
-				Name:        "folder",
-				Description: "The folder the file is in.",
-				Required:    true,
+				Type:         discordgo.ApplicationCommandOptionString,
+				Name:         "folder",
+				Description:  "The folder the file is in.",
+				Required:     true,
+				Autocomplete: true,
 			},
 			{
 				Type:         discordgo.ApplicationCommandOptionString,
@@ -82,37 +83,7 @@ func BotConnect(token string) (*discordgo.Session, error) {
 		return s, fmt.Errorf("failed to open a websocket connection with discord. Likely due to an invalid token. %w", err)
 	}
 
-	_, tmpDir, err := FetchRepo()
-	defer os.RemoveAll(tmpDir)
-	if err != nil {
-		return nil, err
-	}
-
-	files, err := os.ReadDir(tmpDir)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, folder := range files {
-		if folder.Name() == ".git" || !folder.IsDir() {
-			continue
-		}
-
-		commands[0].Options[1].Choices = append(commands[0].Options[1].Choices, &discordgo.ApplicationCommandOptionChoice{
-			Name:  folder.Name(),
-			Value: folder.Name(),
-		})
-		dirPath := filepath.Join(tmpDir, folder.Name())
-		subFiles, err := os.ReadDir(dirPath)
-		if err != nil {
-			return nil, err
-		}
-
-		for _, subFile := range subFiles {
-			autoCompleteFile[folder.Name()] = append(autoCompleteFile[folder.Name()], subFile.Name())
-		}
-
-	}
+	go updateFolders()
 
 	s.ApplicationCommandBulkOverwrite(s.State.User.ID, "", commands)
 
@@ -216,6 +187,7 @@ func UpdateRepo(folderName, fileName string, whitelist *Whitelist) error {
 		Username: os.Getenv("GITHUB_USERNAME"), // Replace with your GitHub username
 		Password: os.Getenv("GITHUB_TOKEN"),    // Replace with your GitHub token
 	}
+
 	err = repo.Push(&git.PushOptions{
 		Auth: auth,
 	})
@@ -296,69 +268,167 @@ func WhitelistCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 		// Add the new user ID to the whitelist.
 		whitelist.ExclusiveJoin = append(whitelist.ExclusiveJoin, userId)
+
+		// Update the whitelist
+		err = UpdateRepo(options["folder"].(string), options["file"].(string), whitelist)
+		if err != nil {
+			fmt.Println("Error updating whitelist:", err)
+			return
+		}
+
+		// Send a confirmation message
+		err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Embeds: []*discordgo.MessageEmbed{
+					{
+						Title:       "Success",
+						Description: "User has been added to the whitelist.",
+						Color:       0x00bfff, // Deep Sky Blue
+					},
+				},
+			},
+		})
+		if err != nil {
+			fmt.Println("Error sending confirmation message:", err)
+		}
 	} else if options["action"] == "remove" {
 		// Check if the user ID is already in the whitelist
-		for i, id := range whitelist.ExclusiveJoin {
+		for n, id := range whitelist.ExclusiveJoin {
 			if id == userId {
 				// Remove the user ID from the whitelist.
-				whitelist.ExclusiveJoin = append(whitelist.ExclusiveJoin[:i], whitelist.ExclusiveJoin[i+1:]...)
-				break
+				whitelist.ExclusiveJoin = append(whitelist.ExclusiveJoin[:n], whitelist.ExclusiveJoin[n+1:]...)
+
+				// Update the whitelist
+				err = UpdateRepo(options["folder"].(string), options["file"].(string), whitelist)
+				if err != nil {
+					fmt.Println("Error updating whitelist:", err)
+					return
+				}
+
+				// Send a confirmation message
+				err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+					Type: discordgo.InteractionResponseChannelMessageWithSource,
+					Data: &discordgo.InteractionResponseData{
+						Embeds: []*discordgo.MessageEmbed{
+							{
+								Title:       "Success",
+								Description: "User has been removed from the whitelist.",
+								Color:       0x00bfff, // Deep Sky Blue
+							},
+						},
+					},
+				})
+				if err != nil {
+					fmt.Println("Error sending confirmation message:", err)
+				}
+				return
 			}
 		}
+
+		err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Embeds: []*discordgo.MessageEmbed{
+					{
+						Title:       "Error",
+						Description: "User is not in the whitelist.",
+						Color:       0xff0000,
+					},
+				},
+			},
+		})
+		if err != nil {
+			fmt.Println("Error sending confirmation message:", err)
+		}
+
 	} else {
 		fmt.Println("Invalid action")
 		return
 	}
 
-	// Update the whitelist
-	err = UpdateRepo(options["folder"].(string), options["file"].(string), whitelist)
-	if err != nil {
-		fmt.Println("Error updating whitelist:", err)
-		return
-	}
-
-	// Send a confirmation message
-	err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Embeds: []*discordgo.MessageEmbed{
-				{
-					Title:       "Success",
-					Description: "User has been added to the whitelist.",
-					Color:       0x00bfff, // Deep Sky Blue
-				},
-			},
-		},
-	})
-	if err != nil {
-		fmt.Println("Error sending confirmation message:", err)
-	}
 }
 
 func WhitelistAutoComplete(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
-	options := ParseSlashCommand(i)
+	if i.ApplicationCommandData().Options[2].Focused {
+		choices := []*discordgo.ApplicationCommandOptionChoice{}
+		for folder := range autoCompleteFile {
+			choices = append(choices, &discordgo.ApplicationCommandOptionChoice{
+				Name:  folder,
+				Value: folder,
+			})
+		}
 
-	if options["folder"] == nil {
-		fmt.Println("No folder provided")
-		return
-	}
-
-	response := []*discordgo.ApplicationCommandOptionChoice{}
-	for _, file := range autoCompleteFile[options["folder"].(string)] {
-		response = append(response, &discordgo.ApplicationCommandOptionChoice{
-			Name:  file,
-			Value: file,
+		err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionApplicationCommandAutocompleteResult,
+			Data: &discordgo.InteractionResponseData{
+				Choices: choices,
+			},
 		})
-	}
+		if err != nil {
+			fmt.Println("Error sending autocomplete response:", err)
+		}
+		return
+	} else if i.ApplicationCommandData().Options[3].Focused {
 
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionApplicationCommandAutocompleteResult,
-		Data: &discordgo.InteractionResponseData{
-			Choices: response,
-		},
-	})
-	if err != nil {
-		fmt.Println("Error sending autocomplete response:", err)
+		options := ParseSlashCommand(i)
+
+		if options["folder"] == nil {
+			fmt.Println("No folder provided")
+			return
+		}
+
+		response := []*discordgo.ApplicationCommandOptionChoice{}
+		for _, file := range autoCompleteFile[options["folder"].(string)] {
+			response = append(response, &discordgo.ApplicationCommandOptionChoice{
+				Name:  file,
+				Value: file,
+			})
+		}
+
+		err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionApplicationCommandAutocompleteResult,
+			Data: &discordgo.InteractionResponseData{
+				Choices: response,
+			},
+		})
+		if err != nil {
+			fmt.Println("Error sending autocomplete response:", err)
+		}
+	}
+}
+
+// Function to update the autocomplete list, runs every 30 minutes
+func updateFolders() {
+	for {
+		_, tmpDir, err := FetchRepo()
+		defer os.RemoveAll(tmpDir)
+		if err != nil {
+			fmt.Println("Error fetching repo:", err)
+		}
+
+		files, err := os.ReadDir(tmpDir)
+		if err != nil {
+			fmt.Println("Error reading directory:", err)
+		}
+
+		for _, folder := range files {
+			if folder.Name() == ".git" || !folder.IsDir() {
+				continue
+			}
+
+			dirPath := filepath.Join(tmpDir, folder.Name())
+			subFiles, err := os.ReadDir(dirPath)
+			if err != nil {
+				fmt.Println("Error reading directory:", err)
+			}
+
+			for _, subFile := range subFiles {
+				autoCompleteFile[folder.Name()] = append(autoCompleteFile[folder.Name()], subFile.Name())
+			}
+
+		}
+		time.Sleep(30 * time.Minute)
 	}
 }
