@@ -38,15 +38,8 @@ This Discord Whitelist Bot is designed to manage a user whitelist, utilizing Git
 
 2. **Using Commands:**
 
-   - **Add to Whitelist:** Use `/whitelist add eos_id folder file` to add a user.
-   - **Remove from Whitelist:** Use `/whitelist remove eos_id folder file` to remove a user.
-
-3. **AutoComplete Feature:**
-
-   - The bot supports autocomplete for file names within specified folders.
-
-4. **Whitelist Management:**
-   - The bot updates the whitelist in the specified GitHub repository.
+   - **Add to Whitelist:** Use `/whitelist add` to add a user.
+   - **Remove from Whitelist:** Use `/whitelist remove` to remove a user.
 
 ## Troubleshooting
 
