@@ -17,10 +17,6 @@ type Whitelist struct {
 	ExclusiveJoin []string `json:"ExclusiveJoin"`
 }
 
-const (
-	GITHUB_URL = "https://github.com/Logan9312/Whitelist-Testing"
-)
-
 var commands = []*discordgo.ApplicationCommand{
 	{
 		Type:                     discordgo.ChatApplicationCommand,
@@ -30,6 +26,22 @@ var commands = []*discordgo.ApplicationCommand{
 		NSFW:                     new(bool),
 		Description:              "Add a user to the whitelist",
 		Options: []*discordgo.ApplicationCommandOption{
+			{
+				Type:        discordgo.ApplicationCommandOptionString,
+				Name:        "action",
+				Description: "Add or remove the user from the whitelist.",
+				Required:    true,
+				Choices: []*discordgo.ApplicationCommandOptionChoice{
+					{
+						Name:  "add",
+						Value: "add",
+					},
+					{
+						Name:  "remove",
+						Value: "remove",
+					},
+				},
+			},
 			{
 				Type:        discordgo.ApplicationCommandOptionString,
 				Name:        "eos_id",
@@ -117,7 +129,7 @@ func FetchRepo() (*git.Repository, string, error) {
 	}
 
 	repo, err := git.PlainClone(tmpDir, false, &git.CloneOptions{
-		URL:      GITHUB_URL,
+		URL:      os.Getenv("GITHUB_URL"),
 		Progress: os.Stdout,
 	})
 	if err != nil {
@@ -142,6 +154,10 @@ func GetWhitelist(folderName, fileName string) (*Whitelist, error) {
 	fileContent, err := os.ReadFile(filepath.Join(tmpDir, folderName, fileName))
 	if err != nil {
 		return nil, err
+	}
+
+	if fileContent == nil || len(fileContent) == 0 {
+		return &Whitelist{}, nil
 	}
 
 	var whitelist Whitelist
@@ -255,35 +271,63 @@ func WhitelistCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	// Check if the user ID is already in the whitelist
-	alreadyExists := false
-	for _, id := range whitelist.ExclusiveJoin {
-		if id == userId {
-			alreadyExists = true
-			break
+	if options["action"] == "add" {
+		// Check if the user ID is already in the whitelist
+		for _, id := range whitelist.ExclusiveJoin {
+			if id == userId {
+				err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+					Type: discordgo.InteractionResponseChannelMessageWithSource,
+					Data: &discordgo.InteractionResponseData{
+						Embeds: []*discordgo.MessageEmbed{
+							{
+								Title:       "Error",
+								Description: "User is already in the whitelist.",
+								Color:       0xff0000,
+							},
+						},
+					},
+				})
+				if err != nil {
+					fmt.Println("Error sending confirmation message:", err)
+				}
+				return
+			}
 		}
-	}
 
-	// Add the new user ID to the whitelist if it's not already there
-	if !alreadyExists {
+		// Add the new user ID to the whitelist.
 		whitelist.ExclusiveJoin = append(whitelist.ExclusiveJoin, userId)
+	} else if options["action"] == "remove" {
+		// Check if the user ID is already in the whitelist
+		for i, id := range whitelist.ExclusiveJoin {
+			if id == userId {
+				// Remove the user ID from the whitelist.
+				whitelist.ExclusiveJoin = append(whitelist.ExclusiveJoin[:i], whitelist.ExclusiveJoin[i+1:]...)
+				break
+			}
+		}
+	} else {
+		fmt.Println("Invalid action")
+		return
 	}
 
-	// Update the whitelist if a new ID was added
-	if !alreadyExists {
-		err = UpdateRepo(options["folder"].(string), options["file"].(string), whitelist)
-		if err != nil {
-			fmt.Println("Error updating whitelist:", err)
-			return
-		}
-		fmt.Println("Whitelist updated")
+	// Update the whitelist
+	err = UpdateRepo(options["folder"].(string), options["file"].(string), whitelist)
+	if err != nil {
+		fmt.Println("Error updating whitelist:", err)
+		return
 	}
 
 	// Send a confirmation message
 	err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
-			Content: "User added to the whitelist.",
+			Embeds: []*discordgo.MessageEmbed{
+				{
+					Title:       "Success",
+					Description: "User has been added to the whitelist.",
+					Color:       0x00bfff, // Deep Sky Blue
+				},
+			},
 		},
 	})
 	if err != nil {
