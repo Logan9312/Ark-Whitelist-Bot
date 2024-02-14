@@ -227,6 +227,11 @@ func HandleCommands(s *discordgo.Session, i *discordgo.InteractionCreate) {
 }
 
 func WhitelistCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
+
+	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+	})
+
 	// Assuming the user ID is passed as an option to the command
 	options := ParseSlashCommand(i)
 	if options["eos_id"] == nil {
@@ -247,17 +252,14 @@ func WhitelistCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		// Check if the user ID is already in the whitelist
 		for _, id := range whitelist.ExclusiveJoin {
 			if id == userId {
-				err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: discordgo.InteractionResponseChannelMessageWithSource,
-					Data: &discordgo.InteractionResponseData{
-						Embeds: []*discordgo.MessageEmbed{
+				_, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+						Embeds: &[]*discordgo.MessageEmbed{
 							{
 								Title:       "Error",
 								Description: "User is already in the whitelist.",
 								Color:       0xff0000,
 							},
 						},
-					},
 				})
 				if err != nil {
 					fmt.Println("Error sending confirmation message:", err)
@@ -277,15 +279,12 @@ func WhitelistCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		}
 
 		// Send a confirmation message
-		err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseChannelMessageWithSource,
-			Data: &discordgo.InteractionResponseData{
-				Embeds: []*discordgo.MessageEmbed{
-					{
-						Title:       "Success",
-						Description: "User has been added to the whitelist.",
-						Color:       0x00bfff, // Deep Sky Blue
-					},
+		_, err = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+			Embeds: &[]*discordgo.MessageEmbed{
+				{
+					Title:       "Success",
+					Description: "User has been added to the whitelist.",
+					Color:       0x00bfff, // Deep Sky Blue
 				},
 			},
 		})
@@ -307,17 +306,14 @@ func WhitelistCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				}
 
 				// Send a confirmation message
-				err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: discordgo.InteractionResponseChannelMessageWithSource,
-					Data: &discordgo.InteractionResponseData{
-						Embeds: []*discordgo.MessageEmbed{
+				_, err = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+						Embeds: &[]*discordgo.MessageEmbed{
 							{
 								Title:       "Success",
 								Description: "User has been removed from the whitelist.",
 								Color:       0x00bfff, // Deep Sky Blue
 							},
 						},
-					},
 				})
 				if err != nil {
 					fmt.Println("Error sending confirmation message:", err)
@@ -326,18 +322,15 @@ func WhitelistCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			}
 		}
 
-		err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseChannelMessageWithSource,
-			Data: &discordgo.InteractionResponseData{
-				Embeds: []*discordgo.MessageEmbed{
+		_, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+				Embeds: &[]*discordgo.MessageEmbed{
 					{
 						Title:       "Error",
 						Description: "User is not in the whitelist.",
 						Color:       0xff0000,
 					},
 				},
-			},
-		})
+			})
 		if err != nil {
 			fmt.Println("Error sending confirmation message:", err)
 		}
