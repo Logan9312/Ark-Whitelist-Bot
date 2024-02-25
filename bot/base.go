@@ -75,7 +75,7 @@ func BotConnect(token string) (*discordgo.Session, error) {
 		return s, fmt.Errorf("Discordgo.New Error: %w", err)
 	}
 
-	s.Identify.Intents = discordgo.IntentsAllWithoutPrivileged | discordgo.IntentsGuildMembers
+	s.Identify.Intents = discordgo.IntentsAllWithoutPrivileged
 	s.AddHandler(HandleCommands)
 
 	err = s.Open()
@@ -85,9 +85,10 @@ func BotConnect(token string) (*discordgo.Session, error) {
 
 	go updateFolders()
 
-	s.ApplicationCommandBulkOverwrite(s.State.User.ID, "", commands)
-
-	fmt.Println(s.State.User.Username + "bot startup complete!")
+	_, err = s.ApplicationCommandBulkOverwrite(s.State.User.ID, "", commands)
+	if err != nil {
+		return s, fmt.Errorf("failed to register commands: %w", err)
+	}
 
 	return s, nil
 }
@@ -127,12 +128,12 @@ func GetWhitelist(folderName, fileName string) (*Whitelist, error) {
 		return nil, err
 	}
 
-	if fileContent == nil || len(fileContent) == 0 {
+	if len(fileContent) == 0 {
 		return &Whitelist{}, nil
 	}
 
 	var whitelist Whitelist
-	if err := json.Unmarshal([]byte(fileContent), &whitelist); err != nil {
+	if err := json.Unmarshal(fileContent, &whitelist); err != nil {
 		return nil, err
 	}
 
@@ -253,13 +254,13 @@ func WhitelistCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		for _, id := range whitelist.ExclusiveJoin {
 			if id == userId {
 				_, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
-						Embeds: &[]*discordgo.MessageEmbed{
-							{
-								Title:       "Error",
-								Description: "User is already in the whitelist.",
-								Color:       0xff0000,
-							},
+					Embeds: &[]*discordgo.MessageEmbed{
+						{
+							Title:       "Error",
+							Description: "User is already in the whitelist.",
+							Color:       0xff0000,
 						},
+					},
 				})
 				if err != nil {
 					fmt.Println("Error sending confirmation message:", err)
@@ -307,13 +308,13 @@ func WhitelistCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 				// Send a confirmation message
 				_, err = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
-						Embeds: &[]*discordgo.MessageEmbed{
-							{
-								Title:       "Success",
-								Description: "User has been removed from the whitelist.",
-								Color:       0x00bfff, // Deep Sky Blue
-							},
+					Embeds: &[]*discordgo.MessageEmbed{
+						{
+							Title:       "Success",
+							Description: "User has been removed from the whitelist.",
+							Color:       0x00bfff, // Deep Sky Blue
 						},
+					},
 				})
 				if err != nil {
 					fmt.Println("Error sending confirmation message:", err)
@@ -323,14 +324,14 @@ func WhitelistCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		}
 
 		_, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
-				Embeds: &[]*discordgo.MessageEmbed{
-					{
-						Title:       "Error",
-						Description: "User is not in the whitelist.",
-						Color:       0xff0000,
-					},
+			Embeds: &[]*discordgo.MessageEmbed{
+				{
+					Title:       "Error",
+					Description: "User is not in the whitelist.",
+					Color:       0xff0000,
 				},
-			})
+			},
+		})
 		if err != nil {
 			fmt.Println("Error sending confirmation message:", err)
 		}
@@ -343,47 +344,88 @@ func WhitelistCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 }
 
 func WhitelistAutoComplete(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	// Iterate through all options to find the focused one
+	var focusedOption *discordgo.ApplicationCommandInteractionDataOption
+	for _, option := range i.ApplicationCommandData().Options {
+		if option.Focused {
+			focusedOption = option
+			break
+		}
+	}
 
-	if i.ApplicationCommandData().Options[2].Focused {
-		choices := []*discordgo.ApplicationCommandOptionChoice{}
-		for folder := range autoCompleteFile {
-			choices = append(choices, &discordgo.ApplicationCommandOptionChoice{
-				Name:  folder,
-				Value: folder,
+	// Check if a focused option was found and process accordingly
+	if focusedOption != nil {
+		switch focusedOption.Name {
+		case "folder":
+			choices := []*discordgo.ApplicationCommandOptionChoice{}
+			for folder := range autoCompleteFile {
+				choices = append(choices, &discordgo.ApplicationCommandOptionChoice{
+					Name:  folder,
+					Value: folder,
+				})
+			}
+
+			err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionApplicationCommandAutocompleteResult,
+				Data: &discordgo.InteractionResponseData{
+					Choices: choices,
+				},
 			})
-		}
-
-		err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionApplicationCommandAutocompleteResult,
-			Data: &discordgo.InteractionResponseData{
-				Choices: choices,
-			},
-		})
-		if err != nil {
-			fmt.Println("Error sending autocomplete response:", err)
-		}
-		return
-	} else if i.ApplicationCommandData().Options[3].Focused {
-
-		options := ParseSlashCommand(i)
-
-		if options["folder"] == nil {
-			fmt.Println("No folder provided")
+			if err != nil {
+				fmt.Println("Error sending autocomplete response:", err)
+			}
 			return
-		}
 
-		response := []*discordgo.ApplicationCommandOptionChoice{}
-		for _, file := range autoCompleteFile[options["folder"].(string)] {
-			response = append(response, &discordgo.ApplicationCommandOptionChoice{
-				Name:  file,
-				Value: file,
+		case "file":
+			options := ParseSlashCommand(i)
+			if options["folder"] == nil {
+				fmt.Println("No folder provided")
+				err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+					Type: discordgo.InteractionApplicationCommandAutocompleteResult,
+					Data: &discordgo.InteractionResponseData{
+						Choices: []*discordgo.ApplicationCommandOptionChoice{
+							{
+								Name:  "Please select a folder first.",
+								Value: "",
+							},
+						},
+					},
+				})
+				if err != nil {
+					fmt.Println("Error sending autocomplete response:", err)
+				}
+				return
+			}
+
+			response := []*discordgo.ApplicationCommandOptionChoice{}
+			for _, file := range autoCompleteFile[options["folder"].(string)] {
+				response = append(response, &discordgo.ApplicationCommandOptionChoice{
+					Name:  file,
+					Value: file,
+				})
+			}
+
+			err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionApplicationCommandAutocompleteResult,
+				Data: &discordgo.InteractionResponseData{
+					Choices: response,
+				},
 			})
+			if err != nil {
+				fmt.Println("Error sending autocomplete response:", err)
+			}
 		}
-
+	} else {
+		// Respond with a generic error or guidance message if no option is focused
 		err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionApplicationCommandAutocompleteResult,
 			Data: &discordgo.InteractionResponseData{
-				Choices: response,
+				Choices: []*discordgo.ApplicationCommandOptionChoice{
+					{
+						Name:  "Please select an option.",
+						Value: "",
+					},
+				},
 			},
 		})
 		if err != nil {
@@ -396,10 +438,12 @@ func WhitelistAutoComplete(s *discordgo.Session, i *discordgo.InteractionCreate)
 func updateFolders() {
 	for {
 		_, tmpDir, err := FetchRepo()
-		defer os.RemoveAll(tmpDir)
 		if err != nil {
 			fmt.Println("Error fetching repo:", err)
+			return
 		}
+
+		defer os.RemoveAll(tmpDir)
 
 		files, err := os.ReadDir(tmpDir)
 		if err != nil {
@@ -415,13 +459,27 @@ func updateFolders() {
 			subFiles, err := os.ReadDir(dirPath)
 			if err != nil {
 				fmt.Println("Error reading directory:", err)
+				continue
 			}
 
 			for _, subFile := range subFiles {
-				autoCompleteFile[folder.Name()] = append(autoCompleteFile[folder.Name()], subFile.Name())
+				if !sliceContains(autoCompleteFile[folder.Name()], subFile.Name()) {
+					autoCompleteFile[folder.Name()] = append(autoCompleteFile[folder.Name()], subFile.Name())
+				}
 			}
 
 		}
+
 		time.Sleep(30 * time.Minute)
 	}
+}
+
+// Helper function to check if a slice contains a specific string.
+func sliceContains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
 }

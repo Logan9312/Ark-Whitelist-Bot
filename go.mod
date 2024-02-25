@@ -3,7 +3,7 @@ module github.com/Logan9312/Ark-Whitelist-Bot
 go 1.21.6
 
 require (
-	github.com/bwmarrin/discordgo v0.27.2-0.20240104191117-afc57886f91a
+	github.com/bwmarrin/discordgo v0.27.2-0.20240216140604-15ef2a43d47f
 	github.com/go-git/go-git/v5 v5.11.0
 	github.com/joho/godotenv v1.5.1
 	github.com/labstack/echo/v4 v4.11.4

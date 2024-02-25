@@ -12,6 +12,8 @@ github.com/armon/go-socks5 v0.0.0-20160902184237-e75332964ef5/go.mod h1:wHh0iHkY
 github.com/bwesterb/go-ristretto v1.2.3/go.mod h1:fUIoIZaG73pV5biE2Blr2xEzDoMj7NFEuV9ekS419A0=
 github.com/bwmarrin/discordgo v0.27.2-0.20240104191117-afc57886f91a h1:I1j/9FoqDN+W0ZXiSU91lJXwKCvnKBLgJKlBLYAbim4=
 github.com/bwmarrin/discordgo v0.27.2-0.20240104191117-afc57886f91a/go.mod h1:NJZpH+1AfhIcyQsPeuBKsUtYrRnjkyu0kIVMCHkZtRY=
+github.com/bwmarrin/discordgo v0.27.2-0.20240216140604-15ef2a43d47f h1:JbPPi11wmP68QtHaqM0pqfGjMvqDZlFSTO7n/KM+ZdA=
+github.com/bwmarrin/discordgo v0.27.2-0.20240216140604-15ef2a43d47f/go.mod h1:NJZpH+1AfhIcyQsPeuBKsUtYrRnjkyu0kIVMCHkZtRY=
 github.com/cloudflare/circl v1.3.3 h1:fE/Qz0QdIGqeWfnwq0RE0R7MI51s0M2E4Ga9kq5AEMs=
 github.com/cloudflare/circl v1.3.3/go.mod h1:5XYMA4rFBvNIrhs50XuiBJ15vF2pZn4nnUKZrLbUZFA=
 github.com/cyphar/filepath-securejoin v0.2.4 h1:Ugdm7cg7i6ZK6x3xDF1oEu1nfkyfH53EtKeQYTC3kyg=
